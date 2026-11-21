@@ -76,6 +76,15 @@ RE_POS_A = re.compile(r"^\d+(?:[.,]\d+)?\s*(О?|\.\d+)?$")
 RE_RES_B = re.compile(r"^[\dа-яA-Za-z_.\-/()]")
 RE_ZP_RES = re.compile(r"^1-\d+-\d+")          # ресурс «Затраты труда рабочих»
 RE_MASH_RES = re.compile(r"^91\.")             # машины и механизмы
+# шифр сметной нормы: «ФЕР08-…», «ТЕРм р-35-01-…», «ГЭСН2020 6-01-001-01», «ФССЦпг …»
+RE_NORM_CODE = re.compile(
+    r"^(?:фер|тер|гэсм?|фссц|тссц|рес)[а-яё0-9]*(?:\s*[-–]?\s*\d{2,4})?", re.I)
+
+
+def is_norm_code(code: Any) -> bool:
+    """True, если шифр строки — смета норма (расценка), а не код материала/машины."""
+    t = s(code).strip()
+    return bool(t) and bool(RE_NORM_CODE.match(t))
 
 
 def s(v: Any) -> str:
@@ -256,6 +265,15 @@ def parse_book(path: str) -> Dict[str, Any]:
         it = p["item"]
         if not blk.v["pz"]:
             blk.v["pz"] = blk.v["ozp"] + blk.v["emm"] + blk.v["mat_ob"]
+        # материалы позиции: если печатная форма не напечатала сводную строку «М»,
+        # берём сумму строковых ресурсов позиции (ПЗ тогда сходится с ОТ+ЭМ+М)
+        if not blk.v["material"] and p["resources"]:
+            m_sum = money(sum(rc["cost"] for rc in p["resources"]))
+            if m_sum:
+                blk.v["material"] = m_sum
+                blk.v["mat_ob"] = max(blk.v["mat_ob"], m_sum)
+                blk.cur.setdefault("material", money(
+                    sum(rc.get("cost_current", 0.0) for rc in p["resources"])))
         if not blk.v["total"]:
             blk.v["total"] = blk.v["pz"] + blk.v["nr"] + blk.v["sp"]
         vals = {k: money(blk.v[k]) for k in _Block.KEYS}
@@ -266,6 +284,8 @@ def parse_book(path: str) -> Dict[str, Any]:
         vals["k_upr"] = blk.k_upr or 1.0
         it["values"] = vals
         it["node"] = cur_section["id"] if cur_section else 1
+        it["nr_pct"] = blk.pct_nr or 0.0
+        it["sp_pct"] = blk.pct_sp or 0.0
         items.append(it)
         for rc in p["resources"]:
             rc["ls"] = None
@@ -339,7 +359,8 @@ def parse_book(path: str) -> Dict[str, Any]:
             close_position()
             code, name, unit = b, c, s(row[5])
             qty, price = f(row[8]), f(row[9])
-            cat, wk = _classify(code, name, [x[2] for x in pending_tags], cur_section)
+            cat, wk = _classify(code, name, [(r0, t0) for (r0, t0) in pending_tags],
+                                cur_section["name"] if cur_section else "")
             blk = _Block()
             blk.work_kind = wk
             pos = {"item": {"num": a.replace("\u00a0", " ").strip(), "row": r,
@@ -572,25 +593,63 @@ def _median(vals: List[Optional[float]]) -> Optional[float]:
     return xs[len(xs) // 2]
 
 
-def _classify(code: str, name: str, pending: List[Tuple[int, str, str]], qty_unit: float) -> Tuple[str, str]:
-    """Категория и вид работ позиции по шифру и пометкам печатной формы."""
+def _classify(code: str, name: str, pending: List[Tuple[int, str]],
+              section_name: str = "") -> Tuple[str, str]:
+    """Категория и вид работ позиции по шифру, пометкам и разделу печатной формы."""
     low = ("%s %s" % (code, name)).lower()
-    tags = " ".join(s(p[2]).lower() for p in pending)
-    if "оборудован" in tags or low.strip().startswith("тц_") and "оборудование" in tags:
+    tags = " ".join(s(p[1]).lower() for p in pending)
+    sec = s(section_name).lower()
+    if is_norm_code(code):
+        # нормативная расценка — это работа; перевозка ФССЦпг — отдельная категория
+        if re.search(r"перевозк", low) or code.lower().startswith("фссцпг"):
+            return "transport", "build"
+        if "монтажн" in sec or "монтажн" in tags:
+            return "works", "install"
+        return "works", "build"
+    # без шифра нормы: оборудование / материалы по цене поставщика («ТЦ_…», ФССЦ, прайсы)
+    if "оборудован" in tags or "оборудован" in sec:
         return "equipment", "equipment"
-    if "(оборудование)" in tags:
-        return "equipment", "equipment"
-    if not RE_NUM.fullmatch((code or "").strip()) and not re.search(r"(фер|тер|гэсм?|фссц|тссц|рес)", low):
-        # позиционный шифр вида «ФЕРм08-…» отсутствует → материал/оборудование по цене поставщика
-        if "тц_" in low or "фссц" in low:
-            if "(материалы" in tags:
-                return "material", "install" if "монтажн" in tags else "build"
-            return "material", "other"
-    if re.search(r"фссц|тц_", low):
-        return "material", "other"
     if re.search(r"перевозк", low):
         return "transport", "build"
-    return "works", ""
+    if "монтажн" in tags or "монтажн" in sec:
+        return "material", "install"
+    return "material", "other"
+
+
+def row_kind_of(it: Dict[str, Any]) -> str:
+    """Тип строки для укрупнённых групп: работа (норма), машина или материал."""
+    code = s(it.get("code"))
+    if is_norm_code(code):
+        return "work"
+    if RE_MASH_RES.match(code):
+        return "machine"
+    return "material"
+
+
+def group_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Группы «работа + её материалы»: номер и шифр нормы ведущей строки — всем строкам.
+
+    Тот же алгоритм, что в smeta_parser.group_items (паритет браузерного разбора и
+    автономного парсера): новая группа начинается с позиции-работы (шифр сметной
+    нормы); машины и материалы продолжают группу предыдущей работы.
+    """
+    cur: Optional[Dict[str, Any]] = None
+    for it in items:
+        kind = row_kind_of(it)
+        if kind == "work" or cur is None:
+            cur = {"it": it, "starts": True, "cur": it, "kind": kind, "lead": it}
+            it["group_no"] = s(it.get("num"))
+            it["group_code"] = s(it.get("code")) if kind == "work" else ""
+            it["group_name"] = s(it.get("name"))
+            it["group_lead"] = True
+            it["group_size"] = 1
+        else:
+            it["group_no"] = cur["lead"].get("group_no", "")
+            it["group_code"] = cur["lead"].get("group_code", "")
+            it["group_name"] = cur["lead"].get("group_name", "")
+            it["group_lead"] = False
+            cur["lead"]["group_size"] = int(cur["lead"].get("group_size", 1)) + 1
+    return items
 
 
 def _read_totals_block(rows: List[List[Any]], start_idx: int, out: Dict[str, float],
