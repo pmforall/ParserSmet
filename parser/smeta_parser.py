@@ -78,6 +78,14 @@ import printed_form as pf      # чтение печатной формы «…1
 import printed_positions as pp
 
 SOURCE_SHEET = "Source"
+
+# ПК «ГРАНД-Смета»: книги выгружаются печатной формой локального сметного расчёта
+# (без вкладки «Source»). Разбор — в модуле grand_parser; формат определяется по
+# признакам формы («ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЕТ», «№ п/п» + «Итоги по смете:»).
+try:
+    import grand_parser as gp       # чтение печатной формы ГРАНД-Сметы
+except Exception:                   # pragma: no cover
+    gp = None
 EPS = 0.01  # допуск сверки, руб.
 # трудозатраты (показатели 207/208) — в чел.-ч, хранятся с точностью 4 знаков
 
@@ -355,6 +363,21 @@ class WorkbookParse:
         self.price_levels: List[Dict[str, Any]] = []
         self.main_variant: Optional[int] = None
         self.price_selection: Dict[str, Any] = {}
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "WorkbookParse":
+        """Собрать объект разбора из словаря внешнего парсера (ГРАНД-Смета)."""
+        wp = cls(d.get("path") or d.get("file", ""))
+        for key in ("header", "conditions", "nodes", "items", "resources", "notes",
+                    "doc_summary", "summary_rows", "open_row", "close_row",
+                    "node_indicators", "price_variants", "price_levels",
+                    "price_selection", "main_variant"):
+            if key in d and d[key] is not None:
+                setattr(wp, key, d[key])
+        wp.has_sections = bool(d.get("has_sections"))
+        wp.n_spec_rows = int(d.get("n_spec_rows") or 0)
+        wp.warnings = list(d.get("warnings") or [])
+        return wp
 
     # ---- основной разбор -------------------------------------------------
     def parse(self) -> "WorkbookParse":
@@ -1133,10 +1156,21 @@ def build_dataset(paths: Iterable[str], include_items: bool = True,
                 files_meta.append({"file": os.path.basename(path), "path": path, "smetas": 0,
                                    "nodes": 0, "items": 0, "spec_rows": 0, "reference": True})
                 continue
+        grand = gp is not None and gp.looks_like_grand(path)
         try:
-            wp = WorkbookParse(path).parse()
-            wp.build_tree()
-            wp.printed = read_printed(path)
+            if grand:
+                # ГРАНД-Смета: печатная форма вместо вкладки «Source»; разбор даёт
+                # ту же внутреннюю модель (nodes/items/resources/summary_rows).
+                gd = gp.parse_book(path)
+                gd["items"] = [it for it in gd["items"] if it.get("price_variant", 0) == 0]
+                wp = WorkbookParse.from_dict(gd)
+                wp.grand = gd.get("grand", {})
+                wp.build_tree()
+                wp.printed = []
+            else:
+                wp = WorkbookParse(path).parse()
+                wp.build_tree()
+                wp.printed = read_printed(path)
         except Exception as exc:
             warnings.append("Файл «%s» не разобран: %s" % (os.path.basename(path), exc))
             traceback.print_exc()
@@ -1149,7 +1183,107 @@ def build_dataset(paths: Iterable[str], include_items: bool = True,
                   or [n["id"] for n in wp.nodes if n["kind"] == 3])
         ls_ids = set(ls_all)
         ls_id = ls_all[0] if ls_all else None
-        for it in wp.items:                     # страховка: позиция всегда в смете
+        if grand:
+            # ГРАНД-Смета: узлы уже образуют дерево «смета → разделы», позиции и ресурсы
+            # отнесены к разделам на этапе разбора печатной формы.
+            for it in wp.items:
+                it["ls"] = ls_all[0] if ls_all else None
+            for rc in getattr(wp, "resources", []):
+                rc["ls"] = ls_all[0] if ls_all else None
+            nodes_out = [{
+                "id": n["id"],
+                "kind": n["kind"],
+                "kind_label": KIND_LABEL.get(n["kind"], "Узел %s" % n["kind"]),
+                "parent": n.get("parent"),
+                "depth": n.get("depth", 0),
+                "row": n["row"],
+                "number": n["code"],
+                "name": n["name"],
+                "totals": dict(n["totals"]),
+            } for n in sorted(wp.nodes, key=lambda x: (x.get("depth", 0), x["row"]))]
+            items_by_node: Dict[int, List[Dict[str, Any]]] = {}
+            for it in wp.items:
+                items_by_node.setdefault(it["node"], []).append(it)
+            file_ref = wp.file
+            ls_nodes = [n for n in nodes_out if n["id"] in ls_ids]
+            multi = False
+            printed_sheets: List[Any] = []
+            printed_info: Dict[Any, Dict[str, Any]] = {}
+
+            def raw_number(node: Dict[str, Any]) -> str:
+                return node["number"] or hdr.get("number") or ""
+
+            def source_totals_for(ls: Dict[str, Any]) -> Dict[str, Any]:
+                return pick_source_totals(list(getattr(wp, "summary_rows", [])))
+
+            def unit_scale(row: Optional[Dict[str, Any]], reference: float) -> Optional[Dict[str, Any]]:
+                return dict(row, unit_source="руб", scale=1.0) if row else None
+
+            total_info: Dict[Any, Dict[str, Any]] = {}
+            self_check = gd.get("self_check") or {}
+            for ls in ls_nodes:
+                tot = dict(ls["totals"])
+                src = source_totals_for(ls)
+                src_base = unit_scale(src.get("base"), float(tot.get("total", 0.0) or 0.0))
+                src_k = unit_scale(src.get("with_k"), float(tot.get("total", 0.0) or 0.0))
+                k_src = float(self_check.get("work_coefficient") or 1.0)
+                selected = synth_totals([it for it in wp.items if it.get("ls") == ls["id"]])
+                calc_k = round2(selected.get("total", 0.0))
+                tol_k = 0.05
+                tc: List[Dict[str, Any]] = []
+                if src_base:
+                    dl = round2(src_base["value"] - selected.get("total", 0.0))
+                    st = "ok" if abs(dl) <= max(tol_k, abs(src_base["value"]) * 1e-9) else "mismatch"
+                    tc.append({"code": "SOURCE_TOTAL_BASE",
+                               "label": "Всего по смете (базисный уровень, без коэффициента)",
+                               "row": src_base["row"], "unit": "руб", "source": round2(src_base["value"]),
+                               "unit_source": "руб", "scale": 1.0,
+                               "calc": round2(selected.get("total", 0.0)), "printed": None,
+                               "delta": dl, "status": st})
+                    if st == "mismatch":
+                        add_check(checks, "smeta",
+                                  "%s | %s | печатная форма ГРАНД («Всего»)" % (file_ref, hdr.get("number", "")),
+                                  "warn", "GRAND_TOTAL_BASE_MISMATCH",
+                                  "Сумма позиций (базисный уровень) ≠ строке «Всего» блока "
+                                  "«Итоги по смете:»", dl, ls=ls["id"])
+                if src_k:
+                    d_calc = round2(src_k["value"] - calc_k)
+                    ok_all = abs(d_calc) <= max(tol_k, abs(src_k["value"]) * 1e-9)
+                    tc.append({"code": "SOURCE_TOTAL",
+                               "label": "ВСЕГО ПО СМЕТЕ (итог печатной формы ГРАНД-Сметы)",
+                               "row": src_k["row"], "unit": "руб", "source": round2(src_k["value"]),
+                               "unit_source": "руб", "scale": 1.0, "calc": calc_k,
+                               "printed": round2(src_k["value"]), "delta": d_calc,
+                               "delta_printed": 0.0, "k": k_src,
+                               "k_from": "коэффициенты строк затрат печатной формы",
+                               "status": ("ok" if ok_all else "mismatch")})
+                    if not ok_all:
+                        add_check(checks, "smeta",
+                                  "%s | %s | печатная форма ГРАНД («ВСЕГО по смете»)"
+                                  % (file_ref, hdr.get("number", "")), "warn",
+                                  "GRAND_TOTAL_MISMATCH",
+                                  "Сумма позиций ≠ строке «ВСЕГО по смете» печатной формы",
+                                  d_calc, ls=ls["id"])
+                report_base = round2(float(self_check.get("total_base")
+                                          or (src_base["value"] if src_base else tot.get("total", 0.0))))
+                report_total = round2(float(self_check.get("total_current")
+                                            or (src_k["value"] if src_k else report_base)))
+                total_info[ls["id"]] = {
+                    "total_check": tc, "source_total_calc": calc_k, "source_work_coefficient": k_src,
+                    "total": report_total, "total_base": report_base,
+                    "source_total": ({"row": src_k["row"], "name": src_k["display"], "key": src_k["key"],
+                                      "value": round2(src_k["value"]), "unit_source": "руб", "scale": 1.0}
+                                     if src_k else None),
+                    "source_total_base": ({"row": src_base["row"], "name": src_base["display"],
+                                           "key": src_base["key"], "value": round2(src_base["value"]),
+                                           "unit_source": "руб", "scale": 1.0}
+                                          if src_base else None),
+                }
+            num_count: Dict[str, int] = {}
+            for node in ls_nodes:
+                num_count[raw_number(node)] = num_count.get(raw_number(node), 0) + 1
+        else:
+            for it in wp.items:                     # страховка: позиция всегда в смете
             owner = by_id.get(it["node"])
             if ls_id is not None and owner is None:
                 it["node"] = ls_id
