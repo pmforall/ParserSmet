@@ -1,0 +1,180 @@
+{
+  "schema": "smeta.source-archive/v1",
+  "created_at": "2026-11-20T06:17:07.532298+00:00",
+  "type": "sanitized-source-snapshot",
+  "git_history_included": false,
+  "private_data_included": false,
+  "live_site_modified": false,
+  "normalized_source_files": [],
+  "files": {
+    ".gitignore": {
+      "bytes": 296,
+      "sha256": "03d8f47f85b8f4f936ab5821b058ee9cfb8ea7258a87a3054212d7e9c4f0cb82"
+    },
+    "CHANGELOG.md": {
+      "bytes": 19159,
+      "sha256": "95d68f17c57bbb0e6f0b596b1c3a7f2511ace3f88438f6cb12c0903636fc5636"
+    },
+    "PRIVACY.md": {
+      "bytes": 2097,
+      "sha256": "82e0127e747730307ab1700ef5b0037d322a0d58bd846dee20cd88899e8875dd"
+    },
+    "README.md": {
+      "bytes": 7293,
+      "sha256": "840facdcbd07599307ef5a8dd95f74a56140f9b32a68264e26f3570e341fddcb"
+    },
+    "app/schema.json": {
+      "bytes": 6590,
+      "sha256": "ed99d6b37297820bfc7eaf456cee89a11bceb9ca1ba3f6e74e80e193b75e7d03"
+    },
+    "app/template.html": {
+      "bytes": 523164,
+      "sha256": "4a04cffc62287286217619bafaeafdc3c13a119befcaa9fab9c2a28a4cb8a8af"
+    },
+    "build.py": {
+      "bytes": 3382,
+      "sha256": "89865aaa819581009c2f8c98808779e911840c0a0a0121602d0d6d21e42c7b10"
+    },
+    "deploy/README.md": {
+      "bytes": 3420,
+      "sha256": "ea147728a0c9207298079f1fc07043127367303f1d90948a745bd32ed8cd9318"
+    },
+    "deploy/activate_box1.py": {
+      "bytes": 8572,
+      "sha256": "859ae95aa5328b83347f7b78e6360d7791e1bac7fc15fda47906a3f359094f7e"
+    },
+    "deploy/activate_standalone.py": {
+      "bytes": 6997,
+      "sha256": "66e9323512860df301d6b2b8c3270dbd4e99d2ddc8862ca700eebe4a4980697e"
+    },
+    "deploy/box1_auth.py": {
+      "bytes": 6240,
+      "sha256": "7d8aef32b8fd6102367a9ff124efae686a44c737dfa3d69b9542b4b768234844"
+    },
+    "deploy/call_registration.py": {
+      "bytes": 3702,
+      "sha256": "750e0975ef61e6b43bd16a35b11c9c75795b68fbbb0d60630432a4fcbf00001d"
+    },
+    "deploy/install_standalone.py": {
+      "bytes": 3450,
+      "sha256": "6c1bbfae8508cab8f041d36c269a6bff534398b2e755af671144bbe0a1aaccda"
+    },
+    "deploy/prepare_sso.py": {
+      "bytes": 8569,
+      "sha256": "d3bb6790ec9824e31340286adb8ce07fd00a4b03c7418164527f9be5f8392492"
+    },
+    "deploy/register_idp_client.py": {
+      "bytes": 11683,
+      "sha256": "3f6fb02405cc449931a11bfd77139240a820443ac17fee364ad96f1d51240ffa"
+    },
+    "deploy/stage_sso.py": {
+      "bytes": 2039,
+      "sha256": "e75f2aa1944b0fc0885e2fc45a55c68306511c67a9e0e621d80753b52f34ded4"
+    },
+    "deploy/update_web.py": {
+      "bytes": 7703,
+      "sha256": "b9870fbf0691eb2bc89a9438d0735bcef899aa75a2147a23b8655f11f3cabb52"
+    },
+    "dist/index.html": {
+      "bytes": 527899,
+      "sha256": "40f62b417144f77aeb8fa79a66c1029fb0fdacc949e29ee765e8b7f9c854a9b3"
+    },
+    "dist/Парсер_смет.html": {
+      "bytes": 527899,
+      "sha256": "40f62b417144f77aeb8fa79a66c1029fb0fdacc949e29ee765e8b7f9c854a9b3"
+    },
+    "parser/printed_form.py": {
+      "bytes": 50959,
+      "sha256": "acd2a70686307a9a12eaae225eec5bec6bd2197fd83b07cf59453920fea64b69"
+    },
+    "parser/printed_positions.py": {
+      "bytes": 9152,
+      "sha256": "ac4eadde1813918e4709daf9c175876791b092ae2d3a3d38aafcaa3c1114bd85"
+    },
+    "parser/reference.py": {
+      "bytes": 71677,
+      "sha256": "b4961e8f1179516a97d036b9743d3873593e6737e6524758b6379227de2d4ed7"
+    },
+    "parser/smeta_parser.py": {
+      "bytes": 102225,
+      "sha256": "89a08c6056429599d10eda28ab5fdfef10862160b095c0030362154cadbe2d64"
+    },
+    "parser/verify_parser.py": {
+      "bytes": 29022,
+      "sha256": "e378a4370716514657adba04eeb643b6053f9bdf0c82434965e6d32109771efc"
+    },
+    "run_all.py": {
+      "bytes": 1988,
+      "sha256": "0c156b3eeed7ae3e0aa79d16fbc65a9fced2f663f6187f16ed93e39b5f3c3b26"
+    },
+    "tests/dom_stub.js": {
+      "bytes": 5735,
+      "sha256": "8d1e98747685b72d802ed408c287449aefbf27863999b7269f9fa57a1e48e6f5"
+    },
+    "tests/excel_contract.json": {
+      "bytes": 12628,
+      "sha256": "6dca1845586cea7a9cef8292aec53ce0d4afa0976814be51d48321bdc96dad8a"
+    },
+    "tests/make_multi_ls.py": {
+      "bytes": 19368,
+      "sha256": "e04c3d1fc7f9213d209c77b3b6c92570f4b6c8d3ee744939c13a04189ced8c16"
+    },
+    "tests/make_no_structure.py": {
+      "bytes": 5255,
+      "sha256": "d886730dd7914dbe022e584e80f98a06f20f5864b491552d8349080be64fcafc"
+    },
+    "tests/requirements.txt": {
+      "bytes": 35,
+      "sha256": "0a693c2cdaf243ec2eed00e1cc8d002b7a989020e4e3146a3d3f3afe98d9ebcf"
+    },
+    "tests/test_box1_auth.py": {
+      "bytes": 12335,
+      "sha256": "e5b30af6c4b273d80a4cb24957d9e8829d54910b6131642c63dcccd9da8e53a0"
+    },
+    "tests/test_browser_contract.py": {
+      "bytes": 19786,
+      "sha256": "440f31424cbdfe39bceeb3ba3bbf6feac290e1cb8c55c9a6f3296eb308a73461"
+    },
+    "tests/test_idp_registration.py": {
+      "bytes": 4552,
+      "sha256": "18b7653243fe42f26aa9019fa581ca131a692d0eff57caa8f2f39b22455c76f7"
+    },
+    "tests/test_multi_ls.py": {
+      "bytes": 12607,
+      "sha256": "23661ae4a9cfdd8f23af6be41d1c6622e938cf8e49a9a340a841f50c89090c29"
+    },
+    "tests/test_portable_browser.py": {
+      "bytes": 3990,
+      "sha256": "2b325e672cd519ae547d2380643ddacbf54b802173a7c556130417e199106325"
+    },
+    "tests/test_printed_positions.py": {
+      "bytes": 8076,
+      "sha256": "4e619fbbceb2d4142b1c09c6781180f19b6903b547ce16e80f68d4cea1b56900"
+    },
+    "tests/test_row_groups.py": {
+      "bytes": 17234,
+      "sha256": "443a8200af08f250ae2aed51082eff8ec3c8609ad256035a224ededf3a1b8cfb"
+    },
+    "tests/test_source_archive.py": {
+      "bytes": 3781,
+      "sha256": "958939caf5117b491e99b4fdbfa4aec2074ee3ae10f13c87277d5b219b7f110f"
+    },
+    "tests/test_sso_gateway.py": {
+      "bytes": 10513,
+      "sha256": "157f0bbc142b087097336a38c9d53e364e4ee37d3108a7d99fb822016160af86"
+    },
+    "tests/test_web_build.py": {
+      "bytes": 3431,
+      "sha256": "206ae81d612f154ecedcdbc2ba7cbe35ae77ddf9d2c640f152f8f7e1724e7e71"
+    },
+    "tools/pack_source.py": {
+      "bytes": 11866,
+      "sha256": "6ff0cbecbf5f9a1261f85929b0640b2ec52137da3adeea526094f49f2169866f"
+    },
+    "tools/package_web.py": {
+      "bytes": 3421,
+      "sha256": "8918529d1c183399da876db61c27dfe4b0010afa83e21489385f2df2e4dd8736"
+    }
+  },
+  "manifest_note": "MANIFEST.json не включает собственный хеш; ZIP имеет внешнюю SHA-256."
+}
