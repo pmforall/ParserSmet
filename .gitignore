@@ -31,3 +31,4 @@ backups/
 *.tar
 *.tar.gz
 *.tgz
+!data_source/**/*.xlsx
