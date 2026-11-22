@@ -263,8 +263,12 @@ def parse_book(path: str) -> Dict[str, Any]:
         p, pos = pos, None
         blk: _Block = p["blk"]
         it = p["item"]
+        # прямые затраты позиции: «Итого по расценке» печатается только для позиций с
+        # расценкой; для оборудования/материалов (прямая строка) ПЗ = стоимость строки
         if not blk.v["pz"]:
-            blk.v["pz"] = blk.v["ozp"] + blk.v["emm"] + blk.v["mat_ob"]
+            blk.v["pz"] = blk.v["ozp"] + blk.v["emm"] + blk.v["mat_ob"] or p.get("direct_cost", 0.0)
+        if not blk.cur.get("pz"):
+            blk.cur["pz"] = p.get("direct_cost_current", 0.0)
         # материалы позиции: если печатная форма не напечатала сводную строку «М»,
         # берём сумму строковых ресурсов позиции (ПЗ тогда сходится с ОТ+ЭМ+М)
         if not blk.v["material"] and p["resources"]:
@@ -274,6 +278,15 @@ def parse_book(path: str) -> Dict[str, Any]:
                 blk.v["mat_ob"] = max(blk.v["mat_ob"], m_sum)
                 blk.cur.setdefault("material", money(
                     sum(rc.get("cost_current", 0.0) for rc in p["resources"])))
+        # прямые затраты позиции без расценки целиком идут в материалы/оборудование
+        if not blk.v["material"] and not blk.v["equipment"] and not blk.v["ozp"] \
+                and not blk.v["emm"] and blk.v["pz"]:
+            if it.get("cat") == "equipment":
+                blk.v["equipment"] = blk.v["pz"]
+            else:
+                blk.v["material"] = blk.v["pz"]
+            blk.v["mat_ob"] = max(blk.v["mat_ob"], blk.v["pz"])
+            blk.cur.setdefault("material", blk.cur.get("pz", 0.0))
         if not blk.v["total"]:
             blk.v["total"] = blk.v["pz"] + blk.v["nr"] + blk.v["sp"]
         vals = {k: money(blk.v[k]) for k in _Block.KEYS}
@@ -368,7 +381,12 @@ def parse_book(path: str) -> Dict[str, Any]:
                             "qty": round(qty, 6), "cat": cat, "vid": "", "vid_code": 0,
                             "group": "", "work_kind": wk, "nr_pct": 0.0, "sp_pct": 0.0,
                             "price_variant": 0, "notes": [], "row_end": r},
-                   "blk": blk, "resources": []}
+                   "blk": blk, "resources": [],
+                   # стоимость самой строки позиции — ПЗ для позиций без расценки
+                   # (оборудование и материалы, напечатанные одной строкой); L печатается
+                   # уже с учётом скидок/наценок поставщика, поэтому берём её как есть
+                   "direct_cost": money(f(row[11])),
+                   "direct_cost_current": money(f(row[13]))}
             pending_tags = []
             i += 1
             continue
@@ -545,7 +563,7 @@ def parse_book(path: str) -> Dict[str, Any]:
         {"row": footer_start, "node": ls_id, "key": "ВсегоПоСмете",
          "display": "Всего по смете", "label": "Всего по смете (базисный уровень)",
          "value": money(total_base)},
-        {"row": footer_start, "node": ls_id, "key": "ВСЕГОПОСМЕТЕ",
+        {"row": footer_start + 1, "node": ls_id, "key": "ВСЕГОПОСМЕТЕ",
          "display": "ВСЕГО ПО СМЕТЕ", "label": "ВСЕГО по смете",
          "value": money(total_cur)},
     ]
@@ -581,6 +599,13 @@ def parse_book(path: str) -> Dict[str, Any]:
             "total_current": money(total_cur),
             "work_coefficient": k_upr,
             "sections_printed": {n: b["v"] for n, b in section_blocks.items()},
+        },
+        # самопроверка печатной формы: итоги блока «Итоги по смете:» и коэффициент
+        "self_check": {
+            "total_base": money(total_base),
+            "total_current": money(total_cur),
+            "calc_k": calc_k,
+            "work_coefficient": k_upr,
         },
     }
     return wp
