@@ -278,15 +278,20 @@ def parse_book(path: str) -> Dict[str, Any]:
                 blk.v["mat_ob"] = max(blk.v["mat_ob"], m_sum)
                 blk.cur.setdefault("material", money(
                     sum(rc.get("cost_current", 0.0) for rc in p["resources"])))
-        # прямые затраты позиции без расценки целиком идут в материалы/оборудование
-        if not blk.v["material"] and not blk.v["equipment"] and not blk.v["ozp"] \
-                and not blk.v["emm"] and blk.v["pz"]:
-            if it.get("cat") == "equipment":
-                blk.v["equipment"] = blk.v["pz"]
-            else:
-                blk.v["material"] = blk.v["pz"]
-            blk.v["mat_ob"] = max(blk.v["mat_ob"], blk.v["pz"])
-            blk.cur.setdefault("material", blk.cur.get("pz", 0.0))
+        # прямые затраты позиции без расценки — оборудование или материалы по
+        # классификации строки; для нормативной позиции (работа) это остаток ПЗ,
+        # не вошедший в печатные сводки ОТ/ЭМ/М (например, непополненные ресурсы)
+        if not blk.v["material"] and not blk.v["equipment"] and blk.v["pz"]:
+            resid = money(blk.v["pz"] - blk.v["ozp"] - blk.v["emm"] - blk.v["material"])
+            if resid > EPS:
+                if it.get("cat") == "equipment":
+                    blk.v["equipment"] = resid
+                elif is_norm_code(s(it.get("code"))):
+                    blk.v["material"] = resid
+                else:
+                    blk.v["material"] = resid
+                blk.v["mat_ob"] = money(blk.v["mat_ob"] + resid)
+                blk.cur.setdefault("material", blk.cur.get("pz", 0.0))
         if not blk.v["total"]:
             blk.v["total"] = blk.v["pz"] + blk.v["nr"] + blk.v["sp"]
         vals = {k: money(blk.v[k]) for k in _Block.KEYS}
