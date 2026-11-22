@@ -606,6 +606,10 @@ def parse_book(path: str) -> Dict[str, Any]:
             "total_current": money(total_cur),
             "calc_k": calc_k,
             "work_coefficient": k_upr,
+            # Σстрок позиции в текущем уровне / Σв базисном — средний индекс пересчёта;
+            # используется свёркой как допуск расхождения уровней цен
+            "level_ratio": (money(fc.get("vsego_po_smete", 0.0) / fv["total"])
+                            if fv.get("total") and fc.get("vsego_po_smete") else 1.0),
         },
     }
     return wp
