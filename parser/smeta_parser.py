@@ -1284,9 +1284,9 @@ def build_dataset(paths: Iterable[str], include_items: bool = True,
                 num_count[raw_number(node)] = num_count.get(raw_number(node), 0) + 1
         else:
             for it in wp.items:                     # страховка: позиция всегда в смете
-            owner = by_id.get(it["node"])
-            if ls_id is not None and owner is None:
-                it["node"] = ls_id
+                owner = by_id.get(it["node"])
+                if ls_id is not None and owner is None:
+                    it["node"] = ls_id
 
         def ancestor_ls(node_id: Any) -> Any:
             """Ближайшая объемлющая локальная смета (kind=1) по иерархии узлов."""
