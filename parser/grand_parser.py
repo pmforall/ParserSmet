@@ -610,9 +610,86 @@ def parse_book(path: str) -> Dict[str, Any]:
             # используется свёркой как допуск расхождения уровней цен
             "level_ratio": (money(fc.get("vsego_po_smete", 0.0) / fv["total"])
                             if fv.get("total") and fc.get("vsego_po_smete") else 1.0),
+            # Σпозиций (базисный уровень) — для сверки с печатным блоком «Итоги по смете:»
+            "items_sum": dict(agg[ls_id]),
+            "footer": dict(fv),
+            "sections_printed": {num: dict(b.get("v") or {})
+                                 for num, b in section_blocks.items()},
+            "section_rows": {n["id"]: n["row"] for n in result_nodes if n["kind"] == 4},
         },
     }
     return wp
+
+
+# показатели для внутренней сверки печатной формы (GRAND_*)
+_CHECK_KEYS = (("pz", "Прямые затраты"), ("ozp", "Оплата труда рабочих"),
+               ("emm", "Эксплуатация машин"), ("zpm", "ЗП машинистов"),
+               ("material", "Материалы"), ("nr", "Накладные расходы"),
+               ("sp", "Сметная прибыль"), ("tz_workers", "Затраты труда рабочих, чел.-ч"),
+               ("tz_mash", "Затраты труда машинистов, маш.-ч"),
+               ("total", "Всего по смете"))
+
+
+def self_check_findings(wp: Dict[str, Any]) -> List[Tuple[str, str, Optional[float], str]]:
+    """Сверка Σпозиций с печатными итогами книги ГРАНД-Сметы.
+
+    Возвращает список находок (severity, code, delta, message): пуст — форма сходится.
+    Печатные итоги разделов и сметы напечатаны в базисном уровне; суммы позиций
+    считаются по тем же строкам таблицы, поэтому расхождение ненулевое дельты
+    означает ошибку разбора, а не особенности документа.
+    """
+    sc = wp.get("self_check") or {}
+    items_sum = sc.get("items_sum") or {}
+    footer = sc.get("footer") or {}
+    out: List[Tuple[str, str, Optional[float], str]] = []
+    fname = wp.get("file", "")
+    tol_money = max(EPS, abs(float(footer.get("total", 0.0))) * 1e-9)
+    for key, label in _CHECK_KEYS:
+        printed = float(footer.get(key, 0.0) or 0.0)
+        if not printed:
+            continue
+        got = float(items_sum.get(key, 0.0) or 0.0)
+        d = round(got - printed, 2 if not key.startswith("tz") else 4)
+        tol = EPS_TZ if key.startswith("tz") else tol_money
+        if abs(d) > tol:
+            sev = "error" if abs(printed) > 1.0 else "warn"
+            out.append((sev, "GRAND_SUM_MISMATCH", d,
+                        "Σпозиций ≠ печатному итогу «%s» в файле «%s»" % (label, fname)))
+    # структура итога: Всего = ПЗ + НР + СП (по печатным строкам)
+    if footer.get("total"):
+        d = round(float(footer.get("total", 0.0))
+                  - (float(footer.get("pz", 0.0)) + float(footer.get("nr", 0.0))
+                     + float(footer.get("sp", 0.0))), 2)
+        if abs(d) > tol_money:
+            out.append(("warn", "GRAND_TOTAL_STRUCT", d,
+                        "«Всего» ≠ ПЗ + НР + СП в блоке «Итоги по смете:» (файл «%s»)" % fname))
+    # Σпозиций раздела ≠ печатному блоку «Итоги по разделу N»
+    nodes = {n["id"]: n for n in wp.get("nodes", [])}
+    sec_of_item: Dict[Any, Dict[str, float]] = {}
+    for it in wp.get("items", []):
+        tgt = sec_of_item.setdefault(it.get("node"), {k: 0.0 for k in _Block.KEYS})
+        for k in _Block.KEYS:
+            tgt[k] += float(it["values"].get(k, 0.0) or 0.0)
+    secs = sc.get("sections_printed") or {}
+    rows = sc.get("section_rows") or {}
+    for nid, sums in sec_of_item.items():
+        nd = nodes.get(nid) or {}
+        m = re.search(r"\d+", s(nd.get("code")))
+        num = int(m.group()) if m else None
+        pr = secs.get(num)
+        if not pr:
+            continue
+        for key, label in _CHECK_KEYS:
+            printed = float(pr.get(key, 0.0) or 0.0)
+            if not printed:
+                continue
+            d = round(sums.get(key, 0.0) - printed, 2 if not key.startswith("tz") else 4)
+            tol = EPS_TZ if key.startswith("tz") else tol_money
+            if abs(d) > tol:
+                out.append(("warn", "GRAND_SECTION_MISMATCH", d,
+                            "Σпозиций раздела ≠ печатному итогу «%s» (файл «%s», узел #%s)"
+                            % (label, fname, nid)))
+    return out
 
 
 def _median(vals: List[Optional[float]]) -> Optional[float]:
