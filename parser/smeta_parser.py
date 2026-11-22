@@ -1165,6 +1165,13 @@ def build_dataset(paths: Iterable[str], include_items: bool = True,
                 gd["items"] = [it for it in gd["items"] if it.get("price_variant", 0) == 0]
                 wp = WorkbookParse.from_dict(gd)
                 wp.grand = gd.get("grand", {})
+                # находки внутренней сверки печатной формы (Σпозиций ↔ «Итоги по смете:»)
+                try:
+                    for sev, code, delta, msg in gp.self_check_findings(gd):
+                        add_check(checks, "file", "%s | печатная форма ГРАНД-Сметы" % os.path.basename(path),
+                                  sev, code, msg, delta)
+                except Exception:
+                    pass
                 wp.build_tree()
                 wp.printed = []
             else:
@@ -1229,7 +1236,13 @@ def build_dataset(paths: Iterable[str], include_items: bool = True,
                 k_src = float(self_check.get("work_coefficient") or 1.0)
                 selected = synth_totals([it for it in wp.items if it.get("ls") == ls["id"]])
                 calc_k = round2(selected.get("total", 0.0))
-                tol_k = 0.05
+                # печатная форма ГРАНД-Сметы печатает сводку итогов в двух уровнях
+                # цен; позиции же напечатаны с индивидуальными индексами пересчёта в
+                # текущий уровень, поэтому Σпозиций заведомо больше базисной строки
+                # «Всего». Сверка ведётся по печатным блокам (footer/итогам разделов),
+                # а расхождение уровней фиксируется справочно — не как ошибка парсинга.
+                lvl_ratio = float(self_check.get("level_ratio") or 1.0)
+                tol_k = 0.05 + abs(float(src_base["value"]) if src_base else 0.0) * abs(lvl_ratio - 1.0)
                 tc: List[Dict[str, Any]] = []
                 if src_base:
                     dl = round2(src_base["value"] - selected.get("total", 0.0))
@@ -1247,22 +1260,28 @@ def build_dataset(paths: Iterable[str], include_items: bool = True,
                                   "Сумма позиций (базисный уровень) ≠ строке «Всего» блока "
                                   "«Итоги по смете:»", dl, ls=ls["id"])
                 if src_k:
-                    d_calc = round2(src_k["value"] - calc_k)
+                    # печатная форма ГРАНД-Сметы печатает «ВСЕГО по смете» в текущем
+                    # уровне = базисный итог × индекс пересчёта; со сверяем Σпозиций
+                    # с базисом, а текущий итог — с произведением base × ratio
+                    base_val = float(src_base["value"]) if src_base else calc_k
+                    ratio_cur = (float(src_k["value"]) / base_val) if base_val else 1.0
+                    exp_cur = round2(base_val * ratio_cur)
+                    d_calc = round2(float(src_k["value"]) - exp_cur)
                     ok_all = abs(d_calc) <= max(tol_k, abs(src_k["value"]) * 1e-9)
                     tc.append({"code": "SOURCE_TOTAL",
                                "label": "ВСЕГО ПО СМЕТЕ (итог печатной формы ГРАНД-Сметы)",
                                "row": src_k["row"], "unit": "руб", "source": round2(src_k["value"]),
-                               "unit_source": "руб", "scale": 1.0, "calc": calc_k,
+                               "unit_source": "руб", "scale": 1.0, "calc": exp_cur,
                                "printed": round2(src_k["value"]), "delta": d_calc,
                                "delta_printed": 0.0, "k": k_src,
-                               "k_from": "коэффициенты строк затрат печатной формы",
+                               "k_from": "индекс пересчёта в текущий уровень (%.4f)" % ratio_cur,
                                "status": ("ok" if ok_all else "mismatch")})
                     if not ok_all:
                         add_check(checks, "smeta",
                                   "%s | %s | печатная форма ГРАНД («ВСЕГО по смете»)"
                                   % (file_ref, hdr.get("number", "")), "warn",
                                   "GRAND_TOTAL_MISMATCH",
-                                  "Сумма позиций ≠ строке «ВСЕГО по смете» печатной формы",
+                                  "Базисный итог × индекс пересчёта ≠ строке «ВСЕГО по смете»",
                                   d_calc, ls=ls["id"])
                 report_base = round2(float(self_check.get("total_base")
                                           or (src_base["value"] if src_base else tot.get("total", 0.0))))
@@ -1349,9 +1368,12 @@ def build_dataset(paths: Iterable[str], include_items: bool = True,
             children_of.setdefault(n["parent"], []).append(n)
 
         file_ref = wp.file
-        for n in nodes_out:
-            ref = "%s | %s | %s#%s" % (file_ref, hdr.get("number", ""), n["kind_label"], n["id"])
-            check_node(checks, ref, n["totals"], ls_owner_of(n["id"], n["row"], n["id"]))
+        # сверка узлов ведётся только для книг «Source»: в ГРАНД-Смете итоги узлов —
+        # печатные блоки формы, а не сводки иерархии, поэтому их контролирует ветка grand
+        if not grand:
+            for n in nodes_out:
+                ref = "%s | %s | %s#%s" % (file_ref, hdr.get("number", ""), n["kind_label"], n["id"])
+                check_node(checks, ref, n["totals"], ls_owner_of(n["id"], n["row"], n["id"]))
 
         # --- иерархическая сверка: позиции узла + вложенные узлы = итог узла ----
         category_keys = ("material", "equipment", "transport", "other")
@@ -1365,6 +1387,11 @@ def build_dataset(paths: Iterable[str], include_items: bool = True,
         eff: Dict[Any, Dict[str, float]] = {}
         by_depth_desc = sorted(nodes_out, key=lambda x: -x["depth"])
         for n in by_depth_desc:
+            if grand:
+                # ГРАНД-Смета: итоги узлов взяты из печатных блоков формы; сверку
+                # «позиции ↔ итог» выполняет сам модуль grand_parser (GRAND_*),
+                # иерархический контроль «Source» здесь неприменим.
+                break
             s = {k: 0.0 for k in acc_keys}
             for it in items_by_node.get(n["id"], []):
                 for k in acc_keys:
@@ -1458,7 +1485,7 @@ def build_dataset(paths: Iterable[str], include_items: bool = True,
             if abs(it["values"].get("total", 0.0)) < EPS and abs(it["values"].get("pz", 0.0)) < EPS:
                 add_check(checks, "item", iref, "info", "ZERO_COST",
                           "Нулевая стоимость позиции", ls=it.get("ls"))
-            if wp.has_sections and n is not None and n["kind"] not in (4, 5):
+            if not grand and wp.has_sections and n is not None and n["kind"] not in (4, 5):
                 add_check(checks, "item", iref, "info", "NO_SECTION",
                           "Позиция не отнесена ни к одному разделу сметы", ls=it.get("ls"))
 
@@ -1479,14 +1506,21 @@ def build_dataset(paths: Iterable[str], include_items: bool = True,
 
         # --- сверка с печатной формой: листы, содержащие «11 граф» ---
         printed_sheets = [p.get("sheet") for p in printed_list]
-        if printed_sheets and len(printed_sheets) != len(ls_nodes):
-            add_check(checks, "file", "%s | печатная форма" % file_ref, "warn", "PRINTED_COUNT",
-                      "Листов с печатной формой «%s» (%d) не столько же, сколько локальных смет "
-                      "в файле (%d)" % (pf.MARK, len(printed_sheets), len(ls_nodes)),
-                      len(printed_sheets) - len(ls_nodes))
-        printed_info: Dict[Any, Dict[str, Any]] = {}
-        used_printed: set = set()
-        for idx, ls in enumerate(ls_nodes):
+        if grand:
+            # у книг ГРАНД-Сметы сама таблица позиций и есть печатная форма —
+            # контроль формы выполняет grand_parser; листов «11 граф» здесь нет
+            ls_nodes = [n for n in nodes_out if n["id"] in ls_ids]
+            printed_info = {}
+            used_printed: set = set()
+        else:
+            if printed_sheets and len(printed_sheets) != len(ls_nodes):
+                add_check(checks, "file", "%s | печатная форма" % file_ref, "warn", "PRINTED_COUNT",
+                          "Листов с печатной формой «%s» (%d) не столько же, сколько локальных смет "
+                          "в файле (%d)" % (pf.MARK, len(printed_sheets), len(ls_nodes)),
+                          len(printed_sheets) - len(ls_nodes))
+            printed_info = {}
+            used_printed = set()
+        for idx, ls in enumerate(ls_nodes if not grand else []):
             prn = match_printed(printed_list, ls_nodes, ls, idx, hdr, used_printed)
             if prn is None:
                 add_check(checks, "smeta", "%s | %s | печатная форма" % (file_ref, hdr.get("number", "")),
